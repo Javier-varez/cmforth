@@ -11,7 +11,8 @@ log = "0.4.29"
 
 [features]
 cortex-m-arch = ["cortex-m", "heapless"]
-default = ["cortex-m-arch"]
+std = ["heapless"]
+default = ["std"]
 
 [dev-dependencies]
 cortex-m-rt = { version = "0.7.5" }

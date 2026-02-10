@@ -18,6 +18,12 @@ use thumbv7m::*;
 ))]
 compile_error!("The cortex-m-arch feature can only be used for ARM none EABI targets.");
 
+#[cfg(feature = "std")]
+mod sw;
+
+#[cfg(feature = "std")]
+use sw::*;
+
 #[derive(Default, Debug)]
 #[repr(u32)]
 pub enum ExitReason {
@@ -299,7 +305,7 @@ impl<'a> ForthContext<'a> {
             State::ImmediateMode => match maybe_word {
                 Ok(word) => unsafe { self.exec_word(word, io) },
                 Err(Error::WordNotFound) => {
-                    let num = Word::from_str_radix(word, self.variables.base)
+                    let num = Word::from_str_radix(word, self.variables.base as u32)
                         .map_err(|_| Error::WordNotFound)?;
                     self.dsp.push(num)
                 }
@@ -314,7 +320,7 @@ impl<'a> ForthContext<'a> {
                     Ok(())
                 }
                 Err(Error::WordNotFound) => {
-                    let num: Word = Word::from_str_radix(word, self.variables.base)
+                    let num: Word = Word::from_str_radix(word, self.variables.base as u32)
                         .map_err(|_| Error::WordNotFound)?;
                     self.cpa.push(forth_lit())?;
                     self.cpa.push(num)?;
