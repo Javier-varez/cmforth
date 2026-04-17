@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: 'Install rust-toolchain.toml'
       run: rustup toolchain install
     - run: cargo clippy
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: 'Install rust-toolchain.toml'
       run: rustup toolchain install
     - run: cargo build -r
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: 'Install rust-toolchain.toml'
       run: rustup toolchain install
     - run: cargo fmt --check
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: 'Install rust-toolchain.toml'
       run: rustup toolchain install
     - run: cargo doc
