@@ -1,0 +1,56 @@
+name: "Build and test"
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo_clippy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: 'Install rust-toolchain.toml'
+      run: rustup toolchain install
+    - run: cargo clippy
+
+  cargo_build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: 'Install rust-toolchain.toml'
+      run: rustup toolchain install
+    - run: cargo build -r
+
+  # We don't have any tests, and need a way to run them on target/qemu
+  # cargo_test:
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: 'Install rust-toolchain.toml'
+  #     run: rustup toolchain install
+  #   - run: cargo test
+
+  cargo_fmt:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: 'Install rust-toolchain.toml'
+      run: rustup toolchain install
+    - run: cargo fmt --check
+
+  cargo_doc:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: 'Install rust-toolchain.toml'
+      run: rustup toolchain install
+    - run: cargo doc
