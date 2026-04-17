@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended", "config:automergeAll", "config:automergePr", "config:automergeRequireAllStatusChecks", "config:semanticCommits"
+    "config:recommended", ":automergeAll", ":automergePr", ":automergeRequireAllStatusChecks", ":semanticCommits"
   ]
 }
