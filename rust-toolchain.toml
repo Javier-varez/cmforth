@@ -1,4 +1,4 @@
 [toolchain]
-channel = "1.96"
+channel = "1.97"
 components = [ "rustc", "rust-std", "rustfmt", "clippy", "rust-analyzer" ]
 targets = [ "thumbv7em-none-eabihf" ]
