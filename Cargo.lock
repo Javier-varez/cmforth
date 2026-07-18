@@ -28,11 +28,25 @@ name = "cmforth"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "heapless",
+ "log",
+ "thiserror",
+]
+
+[[package]]
+name = "cmforth-picocalc"
+version = "0.1.0"
+
+[[package]]
+name = "cmforth-repl"
+version = "0.1.0"
+dependencies = [
+ "cmforth",
+ "cortex-m",
  "cortex-m-rt",
  "heapless",
  "log",
  "static_cell",
- "thiserror",
 ]
 
 [[package]]

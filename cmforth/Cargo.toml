@@ -1,0 +1,14 @@
+[package]
+name = "cmforth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = { workspace = true }
+cortex-m = { workspace = true, optional = true }
+heapless = { workspace = true, optional = true }
+log = { workspace = true }
+
+[features]
+cortex-m-arch = ["cortex-m", "heapless"]
+default = ["cortex-m-arch"]

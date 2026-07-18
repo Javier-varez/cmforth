@@ -78,8 +78,6 @@ static LOGGER: SemihostingLogger = SemihostingLogger {
     level: log::LevelFilter::Info,
 };
 
-static FORTH_SOURCE: &str = include_str!("../forth.f");
-
 #[entry]
 fn main() -> ! {
     LOGGER.register();
@@ -94,7 +92,10 @@ fn main() -> ! {
     );
 
     {
-        let mut initial_io = CombinedIo::new(StringReader::new(FORTH_SOURCE), SemihostingIo::new());
+        let mut initial_io = CombinedIo::new(
+            StringReader::new(cmforth::FORTH_SOURCE),
+            SemihostingIo::new(),
+        );
         while !initial_io.reader.is_eof() {
             unsafe { forth.interpret_one(&mut initial_io) }.unwrap();
         }
