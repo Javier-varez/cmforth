@@ -11,6 +11,9 @@ use interpreter::ForthContext;
 use stack::Stack;
 use types::{Address, Word};
 
+/// Additional forth sources
+pub static FORTH_SOURCE: &str = include_str!("../forth.f");
+
 pub struct Forth<'a> {
     context: ForthContext<'a>,
 }

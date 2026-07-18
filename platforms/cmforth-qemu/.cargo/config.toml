@@ -1,0 +1,5 @@
+[target.thumbv7em-none-eabihf]
+runner = ["./run_qemu.sh"]
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+]
