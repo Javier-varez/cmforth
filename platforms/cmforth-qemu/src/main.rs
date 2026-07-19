@@ -23,7 +23,7 @@ static COMPILE_AREA_STORAGE: StaticCell<StackStorage<COMPILE_AREA_WORDS, Word>> 
 use core::fmt::Write;
 use core::panic::PanicInfo;
 
-struct SemihostingWriter {}
+struct SemihostingWriter;
 
 impl Write for SemihostingWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -51,7 +51,7 @@ impl log::Log for SemihostingLogger {
     fn log(&self, record: &log::Record) {
         if record.metadata().level() <= self.level {
             let _ = writeln!(
-                &mut SemihostingWriter {},
+                &mut SemihostingWriter,
                 "{} - {}: {}",
                 record.target(),
                 record.level(),
@@ -70,7 +70,7 @@ impl log::Log for SemihostingLogger {
 #[inline(never)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let _ = writeln!(&mut SemihostingWriter {}, "{}", info.message());
+    let _ = writeln!(&mut SemihostingWriter, "{}", info.message());
     loop {}
 }
 
