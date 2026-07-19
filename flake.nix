@@ -9,6 +9,7 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
+        "aarch64-darwin"
       ];
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
@@ -23,6 +24,7 @@
             pkgs.probe-rs
             pkgs.flip-link
             pkgs.gcc-arm-embedded-14
+            pkgs.picotool
           ];
 
         };
