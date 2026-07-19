@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 cmforth.workspace = true
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
+embedded-graphics.workspace = true
 embedded-hal.workspace = true
 
 defmt.workspace = true

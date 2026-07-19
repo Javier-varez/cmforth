@@ -1,20 +1,27 @@
-//! Blinks the LED on a Pico board
-//!
-//! This will blink an LED attached to GP25, which is the pin the Pico uses for the on-board LED.
+//! PicoCalc display bring-up.
 #![no_std]
 #![no_main]
 
+mod display;
+
 use defmt::*;
 use defmt_rtt as _;
-use embedded_hal::digital::OutputPin;
+use display::PicoCalcDisplay;
+use embedded_graphics::{
+    mono_font::{MonoTextStyleBuilder, ascii::FONT_10X20},
+    pixelcolor::Rgb888,
+    prelude::*,
+    primitives::{PrimitiveStyle, Rectangle},
+    text::{Baseline, Text},
+};
+use embedded_hal::i2c::I2c;
+use embedded_hal::spi::MODE_0;
 use panic_probe as _;
 use rp235x_hal::clocks::init_clocks_and_plls;
+use rp235x_hal::fugit::RateExtU32;
+use rp235x_hal::gpio::{FunctionSpi, PinState};
 use rp235x_hal::{self as hal, entry};
 use rp235x_hal::{Clock, pac};
-
-// Provide an alias for our BSP so we can switch targets quickly.
-// Uncomment the BSP you included in Cargo.toml, the rest of the code does not need to change.
-// use some_bsp;
 
 /// Tell the Boot ROM about our application
 #[unsafe(link_section = ".start_block")]
@@ -25,7 +32,6 @@ pub static IMAGE_DEF: hal::block::ImageDef = hal::block::ImageDef::secure_exe();
 fn main() -> ! {
     info!("Program start");
     let mut pac = pac::Peripherals::take().unwrap();
-    let core = cortex_m::Peripherals::take().unwrap();
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
     let sio = hal::Sio::new(pac.SIO);
 
@@ -43,7 +49,7 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+    let delay = hal::Timer::new_timer0(pac.TIMER0, &mut pac.RESETS, &clocks);
 
     let pins = hal::gpio::Pins::new(
         pac.IO_BANK0,
@@ -52,24 +58,82 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    // This is the correct pin on the Raspberry Pico 2 board. On other boards, even if they have an
-    // on-board LED, it might need to be changed.
-    //
-    // Notably, on the Pico 2 W, the LED is not connected to any of the RP2350 GPIOs but to the cyw43 module instead.
-    // One way to do that is by using [embassy](https://github.com/embassy-rs/embassy/blob/main/examples/rp/src/bin/wifi_blinky.rs)
-    //
-    // If you have a Pico W and want to toggle a LED with a simple GPIO output pin, you can connect an external
-    // LED to one of the GPIO pins, and reference that pin here. Don't forget adding an appropriate resistor
-    // in series with the LED.
-    let mut led_pin = pins.gpio25.into_push_pull_output();
+    // The LCD backlight is controlled by the PicoCalc's STM32, independently
+    // of the LCD controller. Set it explicitly instead of relying on its
+    // retained/default value.
+    let mut backlight_i2c = hal::I2C::i2c1(
+        pac.I2C1,
+        pins.gpio6.reconfigure(),
+        pins.gpio7.reconfigure(),
+        10_000u32.Hz(),
+        &mut pac.RESETS,
+        clocks.system_clock.freq(),
+    );
+    if backlight_i2c.write(0x1f_u8, &[0x85, 0xf0]).is_err() {
+        warn!("Could not set LCD backlight");
+    }
+
+    // PicoCalc display: SPI1 SCK=GP10, MOSI=GP11, MISO=GP12, CS=GP13,
+    // DC=GP14, RESET=GP15.
+    let sck = pins.gpio10.into_function::<FunctionSpi>();
+    let mosi = pins.gpio11.into_function::<FunctionSpi>();
+    let miso = pins.gpio12.into_function::<FunctionSpi>();
+    let cs = pins.gpio13.into_push_pull_output_in_state(PinState::High);
+    let dc = pins.gpio14.into_push_pull_output_in_state(PinState::High);
+    let reset = pins.gpio15.into_push_pull_output_in_state(PinState::High);
+
+    let spi = hal::Spi::<_, _, _, 8>::new(pac.SPI1, (mosi, miso, sck)).init(
+        &mut pac.RESETS,
+        clocks.peripheral_clock.freq(),
+        12_000_000u32.Hz(),
+        MODE_0,
+    );
+
+    let mut display = PicoCalcDisplay::new(spi, cs, dc, reset, delay);
+    display.init().unwrap();
+    display.clear(Rgb888::WHITE).unwrap();
+
+    Rectangle::new(Point::new(8, 8), Size::new(304, 304))
+        .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, 3))
+        .draw(&mut display)
+        .unwrap();
+
+    for (x, color) in [Rgb888::RED, Rgb888::GREEN, Rgb888::BLUE]
+        .into_iter()
+        .enumerate()
+    {
+        Rectangle::new(Point::new(45 + x as i32 * 80, 75), Size::new(70, 50))
+            .into_styled(PrimitiveStyle::with_fill(color))
+            .draw(&mut display)
+            .unwrap();
+    }
+
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_10X20)
+        .text_color(Rgb888::WHITE)
+        .background_color(Rgb888::BLACK)
+        .build();
+    Text::with_baseline(
+        "Hello, PicoCalc!",
+        Point::new(80, 165),
+        text_style,
+        Baseline::Top,
+    )
+    .draw(&mut display)
+    .unwrap();
+    Text::with_baseline(
+        "cmforth is running",
+        Point::new(70, 195),
+        text_style,
+        Baseline::Top,
+    )
+    .draw(&mut display)
+    .unwrap();
+
+    info!("Display initialized");
 
     loop {
-        info!("on!");
-        led_pin.set_high().unwrap();
-        delay.delay_ms(500);
-        info!("off!");
-        led_pin.set_low().unwrap();
-        delay.delay_ms(500);
+        cortex_m::asm::wfi();
     }
 }
 
