@@ -1,8 +1,9 @@
-//! PicoCalc display bring-up.
+//! PicoCalc display and keyboard bring-up.
 #![no_std]
 #![no_main]
 
 mod display;
+mod keyboard;
 
 use defmt::*;
 use defmt_rtt as _;
@@ -16,6 +17,7 @@ use embedded_graphics::{
 };
 use embedded_hal::i2c::I2c;
 use embedded_hal::spi::MODE_0;
+use keyboard::PicoCalcKeyboard;
 use panic_probe as _;
 use rp235x_hal::clocks::init_clocks_and_plls;
 use rp235x_hal::fugit::RateExtU32;
@@ -61,7 +63,7 @@ fn main() -> ! {
     // The LCD backlight is controlled by the PicoCalc's STM32, independently
     // of the LCD controller. Set it explicitly instead of relying on its
     // retained/default value.
-    let mut backlight_i2c = hal::I2C::i2c1(
+    let mut system_i2c = hal::I2C::i2c1(
         pac.I2C1,
         pins.gpio6.reconfigure(),
         pins.gpio7.reconfigure(),
@@ -69,9 +71,10 @@ fn main() -> ! {
         &mut pac.RESETS,
         clocks.system_clock.freq(),
     );
-    if backlight_i2c.write(0x1f_u8, &[0x85, 0xf0]).is_err() {
+    if system_i2c.write(0x1f_u8, &[0x85, 0xf0]).is_err() {
         warn!("Could not set LCD backlight");
     }
+    let mut keyboard = PicoCalcKeyboard::new(system_i2c);
 
     // PicoCalc display: SPI1 SCK=GP10, MOSI=GP11, MISO=GP12, CS=GP13,
     // DC=GP14, RESET=GP15.
@@ -130,10 +133,107 @@ fn main() -> ! {
     .draw(&mut display)
     .unwrap();
 
-    info!("Display initialized");
+    const INPUT_LEFT: i32 = 10;
+    const INPUT_TOP: i32 = 258;
+    const INPUT_BOTTOM: i32 = 308;
+    const CHARACTER_WIDTH: i32 = 10;
+    const LINE_HEIGHT: i32 = 20;
+
+    Rectangle::new(Point::new(8, 230), Size::new(304, 82))
+        .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
+        .draw(&mut display)
+        .unwrap();
+    Text::with_baseline(
+        "Keyboard input:",
+        Point::new(INPUT_LEFT, 234),
+        text_style,
+        Baseline::Top,
+    )
+    .draw(&mut display)
+    .unwrap();
+
+    info!("Display and keyboard initialized");
+
+    let mut cursor = Point::new(INPUT_LEFT, INPUT_TOP);
+    let mut keyboard_error = false;
 
     loop {
-        cortex_m::asm::wfi();
+        let key = match keyboard.read_key() {
+            Ok(key) => {
+                if keyboard_error {
+                    info!("Keyboard communication restored");
+                    keyboard_error = false;
+                }
+                key
+            }
+            Err(_) => {
+                if !keyboard_error {
+                    warn!("Could not read keyboard");
+                    keyboard_error = true;
+                }
+                None
+            }
+        };
+
+        let Some(key) = key else {
+            continue;
+        };
+        debug!("Key pressed: {=u8}", key);
+
+        match key {
+            b'\r' | b'\n' => {
+                cursor.x = INPUT_LEFT;
+                cursor.y += LINE_HEIGHT;
+            }
+            b'\x08' | b'\x7f' => {
+                if cursor.x > INPUT_LEFT {
+                    cursor.x -= CHARACTER_WIDTH;
+                    Rectangle::new(
+                        cursor,
+                        Size::new(CHARACTER_WIDTH as u32, LINE_HEIGHT as u32),
+                    )
+                    .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
+                    .draw(&mut display)
+                    .unwrap();
+                }
+            }
+            b' '..=b'~' => {
+                if cursor.x + CHARACTER_WIDTH > 310 {
+                    cursor.x = INPUT_LEFT;
+                    cursor.y += LINE_HEIGHT;
+                }
+
+                if cursor.y + LINE_HEIGHT > INPUT_BOTTOM {
+                    Rectangle::new(
+                        Point::new(INPUT_LEFT, INPUT_TOP),
+                        Size::new(300, (INPUT_BOTTOM - INPUT_TOP) as u32),
+                    )
+                    .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
+                    .draw(&mut display)
+                    .unwrap();
+                    cursor = Point::new(INPUT_LEFT, INPUT_TOP);
+                }
+
+                let bytes = [key];
+                let character = core::str::from_utf8(&bytes).unwrap();
+                Text::with_baseline(character, cursor, text_style, Baseline::Top)
+                    .draw(&mut display)
+                    .unwrap();
+                cursor.x += CHARACTER_WIDTH;
+            }
+            _ => {}
+        }
+
+        if cursor.y + LINE_HEIGHT > INPUT_BOTTOM {
+            Rectangle::new(
+                Point::new(INPUT_LEFT, INPUT_TOP),
+                Size::new(300, (INPUT_BOTTOM - INPUT_TOP) as u32),
+            )
+            .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
+            .draw(&mut display)
+            .unwrap();
+            cursor = Point::new(INPUT_LEFT, INPUT_TOP);
+        }
     }
 }
 
