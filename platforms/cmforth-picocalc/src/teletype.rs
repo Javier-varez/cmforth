@@ -1,6 +1,6 @@
 use core::convert::Infallible;
 use embedded_graphics::{
-    mono_font::{MonoTextStyle, ascii::FONT_10X20},
+    mono_font::{MonoTextStyleBuilder, ascii::FONT_6X12},
     pixelcolor::Rgb888,
     prelude::*,
     text::{Baseline, Text},
@@ -13,9 +13,10 @@ use crate::display::{HEIGHT, PicoCalcDisplay, WIDTH};
 use crate::keyboard::PicoCalcKeyboard;
 use cmforth::io::{Reader, ReaderWriter, Writer};
 
-const MAX_LINES: usize = HEIGHT as usize / FONT_10X20.character_size.height as usize;
-const MAX_WIDTH: usize =
-    WIDTH as usize / (FONT_10X20.character_size.width + FONT_10X20.character_spacing) as usize;
+const CHARACTER_WIDTH: u32 = FONT_6X12.character_size.width + FONT_6X12.character_spacing;
+const CHARACTER_HEIGHT: u32 = FONT_6X12.character_size.height;
+const MAX_LINES: usize = HEIGHT as usize / CHARACTER_HEIGHT as usize;
+const MAX_WIDTH: usize = WIDTH as usize / CHARACTER_WIDTH as usize;
 
 pub struct Teletype<I2C, SPI, CS, DC, RST, DELAY> {
     read_line: Vec<u8, MAX_WIDTH>,
@@ -57,24 +58,28 @@ where
         }
     }
 
-    fn newline(&mut self) {
-        if self.lines.is_full() {
+    /// Adds a line and reports whether the visible contents scrolled.
+    fn newline(&mut self) -> bool {
+        let scrolled = self.lines.is_full();
+        if scrolled {
             self.lines.pop_front();
         }
         self.lines.push_back(String::new()).unwrap();
+        scrolled
     }
 
     fn update_display(&mut self) {
-        let text_style = MonoTextStyle::new(&FONT_10X20, Rgb888::WHITE);
+        let text_style = MonoTextStyleBuilder::new()
+            .font(&FONT_6X12)
+            .text_color(Rgb888::WHITE)
+            .background_color(Rgb888::BLACK)
+            .build();
 
         self.display.clear(Rgb888::BLACK).unwrap();
         for (line_number, line) in self.lines.iter().enumerate() {
             Text::with_baseline(
                 line,
-                Point::new(
-                    0,
-                    line_number as i32 * FONT_10X20.character_size.height as i32,
-                ),
+                Point::new(0, line_number as i32 * CHARACTER_HEIGHT as i32),
                 text_style,
                 Baseline::Top,
             )
@@ -83,16 +88,43 @@ where
         }
     }
 
+    fn update_text(&mut self, line: usize, column: usize, text: &str) {
+        let text_style = MonoTextStyleBuilder::new()
+            .font(&FONT_6X12)
+            .text_color(Rgb888::WHITE)
+            .background_color(Rgb888::BLACK)
+            .build();
+
+        Text::with_baseline(
+            text,
+            Point::new(
+                column as i32 * CHARACTER_WIDTH as i32,
+                line as i32 * CHARACTER_HEIGHT as i32,
+            ),
+            text_style,
+            Baseline::Top,
+        )
+        .draw(&mut self.display)
+        .unwrap();
+    }
+
+    fn update_character(&mut self, line: usize, column: usize, character: u8) {
+        let bytes = [character];
+        let text = core::str::from_utf8(&bytes).unwrap();
+        self.update_text(line, column, text);
+    }
+
     fn buffer_line(&mut self) {
-        if self.lines.back().is_none_or(|line| !line.is_empty()) {
-            self.newline();
+        if self.lines.back().is_none_or(|line| !line.is_empty()) && self.newline() {
+            self.update_display();
         }
         let last_line = self.lines.back_mut().unwrap();
         last_line.push_str("ok ").unwrap();
+        let line_number = self.lines.len() - 1;
+        self.update_text(line_number, 0, "ok ");
 
         self.read_line.clear();
         self.read_index = 0;
-        self.update_display();
 
         let mut exit = false;
         while !exit {
@@ -106,26 +138,34 @@ where
                     {
                         let last_line = self.lines.back_mut().unwrap();
                         last_line.pop();
+                        let line_number = self.lines.len() - 1;
+                        let column = self.lines.back().unwrap().len();
+                        self.update_character(line_number, column, b' ');
                     }
                 }
                 b'\r' | b'\n' => {
-                    self.newline();
+                    if self.newline() {
+                        self.update_display();
+                    }
                     exit = true;
                 }
                 v => {
-                    let last_line = self.lines.back_mut().unwrap();
                     let printable = v.is_ascii_graphic() || v == b' ';
                     if !self.read_line.is_full()
-                        && (!printable || last_line.len() < last_line.capacity())
+                        && (!printable
+                            || self.lines.back().unwrap().len()
+                                < self.lines.back().unwrap().capacity())
                     {
                         self.read_line.push(v).unwrap();
                         if printable {
-                            last_line.push(v as char).unwrap();
+                            let line_number = self.lines.len() - 1;
+                            let column = self.lines.back().unwrap().len();
+                            self.lines.back_mut().unwrap().push(v as char).unwrap();
+                            self.update_character(line_number, column, v);
                         }
                     }
                 }
             }
-            self.update_display();
         }
     }
 }
@@ -190,22 +230,29 @@ where
     fn write(&mut self, data: &[u8]) {
         for &v in data {
             match v {
-                b'\n' => self.newline(),
+                b'\n' => {
+                    if self.newline() {
+                        self.update_display();
+                    }
+                }
                 b'\r' => {}
                 b' '..=b'~' => {
                     if self
                         .lines
                         .back()
                         .is_none_or(|line| line.len() == line.capacity())
+                        && self.newline()
                     {
-                        self.newline();
+                        self.update_display();
                     }
+                    let line_number = self.lines.len() - 1;
+                    let column = self.lines.back().unwrap().len();
                     self.lines.back_mut().unwrap().push(v as char).unwrap();
+                    self.update_character(line_number, column, v);
                 }
                 _ => {}
             }
         }
-        self.update_display();
     }
 }
 
