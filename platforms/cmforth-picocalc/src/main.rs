@@ -1,20 +1,21 @@
-//! PicoCalc display and keyboard bring-up.
+//! cmforth interpreter for the PicoCalc.
 #![no_std]
 #![no_main]
 
 mod display;
 mod keyboard;
+mod teletype;
 
+use cmforth::{
+    Forth,
+    io::{CombinedIo, StringReader},
+    stack::{Stack, StackStorage},
+    types::{Address, Word},
+};
 use defmt::*;
 use defmt_rtt as _;
 use display::PicoCalcDisplay;
-use embedded_graphics::{
-    mono_font::{MonoTextStyleBuilder, ascii::FONT_10X20},
-    pixelcolor::Rgb888,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle},
-    text::{Baseline, Text},
-};
+use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
 use embedded_hal::i2c::I2c;
 use embedded_hal::spi::MODE_0;
 use keyboard::PicoCalcKeyboard;
@@ -24,6 +25,17 @@ use rp235x_hal::fugit::RateExtU32;
 use rp235x_hal::gpio::{FunctionSpi, PinState};
 use rp235x_hal::{self as hal, entry};
 use rp235x_hal::{Clock, pac};
+use static_cell::StaticCell;
+use teletype::Teletype;
+
+const DATA_STACK_WORDS: usize = 512;
+const RETURN_STACK_ADDRESSES: usize = 128;
+const COMPILE_AREA_WORDS: usize = 2048;
+
+static DATA_STACK_STORAGE: StaticCell<StackStorage<DATA_STACK_WORDS, Word>> = StaticCell::new();
+static RETURN_STACK_STORAGE: StaticCell<StackStorage<RETURN_STACK_ADDRESSES, Address>> =
+    StaticCell::new();
+static COMPILE_AREA_STORAGE: StaticCell<StackStorage<COMPILE_AREA_WORDS, Word>> = StaticCell::new();
 
 /// Tell the Boot ROM about our application
 #[unsafe(link_section = ".start_block")]
@@ -74,7 +86,7 @@ fn main() -> ! {
     if system_i2c.write(0x1f_u8, &[0x85, 0xf0]).is_err() {
         warn!("Could not set LCD backlight");
     }
-    let mut keyboard = PicoCalcKeyboard::new(system_i2c);
+    let keyboard = PicoCalcKeyboard::new(system_i2c);
 
     // PicoCalc display: SPI1 SCK=GP10, MOSI=GP11, MISO=GP12, CS=GP13,
     // DC=GP14, RESET=GP15.
@@ -94,145 +106,34 @@ fn main() -> ! {
 
     let mut display = PicoCalcDisplay::new(spi, cs, dc, reset, delay);
     display.init().unwrap();
-    display.clear(Rgb888::WHITE).unwrap();
+    display.clear(Rgb888::BLACK).unwrap();
 
-    Rectangle::new(Point::new(8, 8), Size::new(304, 304))
-        .into_styled(PrimitiveStyle::with_stroke(Rgb888::WHITE, 3))
-        .draw(&mut display)
-        .unwrap();
+    let data_stack_storage = DATA_STACK_STORAGE.init_with(StackStorage::new);
+    let return_stack_storage = RETURN_STACK_STORAGE.init_with(StackStorage::new);
+    let compile_area_storage = COMPILE_AREA_STORAGE.init_with(StackStorage::new);
+    let mut forth = Forth::new(
+        Stack::new_with(data_stack_storage),
+        Stack::new_with(return_stack_storage),
+        Stack::new_with(compile_area_storage),
+    );
 
-    for (x, color) in [Rgb888::RED, Rgb888::GREEN, Rgb888::BLUE]
-        .into_iter()
-        .enumerate()
-    {
-        Rectangle::new(Point::new(45 + x as i32 * 80, 75), Size::new(70, 50))
-            .into_styled(PrimitiveStyle::with_fill(color))
-            .draw(&mut display)
-            .unwrap();
+    let teletype = Teletype::new(keyboard, display);
+    let mut initial_io = CombinedIo::new(StringReader::new(cmforth::FORTH_SOURCE), teletype);
+    while !initial_io.reader.is_eof() {
+        unsafe { forth.interpret_one(&mut initial_io) }.unwrap();
     }
 
-    let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_10X20)
-        .text_color(Rgb888::WHITE)
-        .background_color(Rgb888::BLACK)
-        .build();
-    Text::with_baseline(
-        "Hello, PicoCalc!",
-        Point::new(80, 165),
-        text_style,
-        Baseline::Top,
-    )
-    .draw(&mut display)
-    .unwrap();
-    Text::with_baseline(
-        "cmforth is running",
-        Point::new(70, 195),
-        text_style,
-        Baseline::Top,
-    )
-    .draw(&mut display)
-    .unwrap();
-
-    const INPUT_LEFT: i32 = 10;
-    const INPUT_TOP: i32 = 258;
-    const INPUT_BOTTOM: i32 = 308;
-    const CHARACTER_WIDTH: i32 = 10;
-    const LINE_HEIGHT: i32 = 20;
-
-    Rectangle::new(Point::new(8, 230), Size::new(304, 82))
-        .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
-        .draw(&mut display)
-        .unwrap();
-    Text::with_baseline(
-        "Keyboard input:",
-        Point::new(INPUT_LEFT, 234),
-        text_style,
-        Baseline::Top,
-    )
-    .draw(&mut display)
-    .unwrap();
-
-    info!("Display and keyboard initialized");
-
-    let mut cursor = Point::new(INPUT_LEFT, INPUT_TOP);
-    let mut keyboard_error = false;
-
+    info!("Forth interpreter initialized");
+    let mut teletype = initial_io.writer;
     loop {
-        let key = match keyboard.read_key() {
-            Ok(key) => {
-                if keyboard_error {
-                    info!("Keyboard communication restored");
-                    keyboard_error = false;
-                }
-                key
-            }
-            Err(_) => {
-                if !keyboard_error {
-                    warn!("Could not read keyboard");
-                    keyboard_error = true;
-                }
-                None
-            }
-        };
-
-        let Some(key) = key else {
-            continue;
-        };
-        debug!("Key pressed: {=u8}", key);
-
-        match key {
-            b'\r' | b'\n' => {
-                cursor.x = INPUT_LEFT;
-                cursor.y += LINE_HEIGHT;
-            }
-            b'\x08' | b'\x7f' => {
-                if cursor.x > INPUT_LEFT {
-                    cursor.x -= CHARACTER_WIDTH;
-                    Rectangle::new(
-                        cursor,
-                        Size::new(CHARACTER_WIDTH as u32, LINE_HEIGHT as u32),
-                    )
-                    .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
-                    .draw(&mut display)
-                    .unwrap();
-                }
-            }
-            b' '..=b'~' => {
-                if cursor.x + CHARACTER_WIDTH > 310 {
-                    cursor.x = INPUT_LEFT;
-                    cursor.y += LINE_HEIGHT;
-                }
-
-                if cursor.y + LINE_HEIGHT > INPUT_BOTTOM {
-                    Rectangle::new(
-                        Point::new(INPUT_LEFT, INPUT_TOP),
-                        Size::new(300, (INPUT_BOTTOM - INPUT_TOP) as u32),
-                    )
-                    .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
-                    .draw(&mut display)
-                    .unwrap();
-                    cursor = Point::new(INPUT_LEFT, INPUT_TOP);
-                }
-
-                let bytes = [key];
-                let character = core::str::from_utf8(&bytes).unwrap();
-                Text::with_baseline(character, cursor, text_style, Baseline::Top)
-                    .draw(&mut display)
-                    .unwrap();
-                cursor.x += CHARACTER_WIDTH;
-            }
-            _ => {}
-        }
-
-        if cursor.y + LINE_HEIGHT > INPUT_BOTTOM {
-            Rectangle::new(
-                Point::new(INPUT_LEFT, INPUT_TOP),
-                Size::new(300, (INPUT_BOTTOM - INPUT_TOP) as u32),
-            )
-            .into_styled(PrimitiveStyle::with_fill(Rgb888::BLACK))
-            .draw(&mut display)
-            .unwrap();
-            cursor = Point::new(INPUT_LEFT, INPUT_TOP);
+        unsafe {
+            let _ = forth.run(&mut teletype).inspect_err(|err| {
+                use core::fmt::Write;
+                use core::write;
+                let mut string: heapless::String<256> = heapless::String::new();
+                let _ = write!(string, "{err}");
+                defmt::error!("Error running forth interpreter: {}", string.as_str());
+            });
         }
     }
 }

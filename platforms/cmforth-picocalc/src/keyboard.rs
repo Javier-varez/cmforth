@@ -54,7 +54,7 @@ where
                 if self.control_held && key.is_ascii_lowercase() {
                     key = key - b'a' + 1;
                 }
-                Ok(Some(key))
+                if key >= 128 { Ok(None) } else { Ok(Some(key)) }
             }
             _ => Ok(None),
         }

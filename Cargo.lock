@@ -74,8 +74,10 @@ dependencies = [
  "defmt-rtt",
  "embedded-graphics",
  "embedded-hal 1.0.0",
+ "heapless 0.9.3",
  "panic-probe",
  "rp235x-hal",
+ "static_cell",
 ]
 
 [[package]]
