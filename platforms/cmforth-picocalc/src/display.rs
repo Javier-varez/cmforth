@@ -27,6 +27,7 @@ use core::convert::Infallible;
 
 use embedded_graphics::{pixelcolor::Rgb888, prelude::*, primitives::Rectangle};
 use embedded_hal::{delay::DelayNs, digital::OutputPin, spi::SpiBus};
+use heapless::Vec;
 
 pub const WIDTH: u16 = 320;
 pub const HEIGHT: u16 = 320;
@@ -34,6 +35,12 @@ pub const HEIGHT: u16 = 320;
 const COLUMN_ADDRESS_SET: u8 = 0x2a;
 const PAGE_ADDRESS_SET: u8 = 0x2b;
 const MEMORY_WRITE: u8 = 0x2c;
+
+// A display-width transfer buffer amortizes the SpiBus call overhead while
+// keeping stack usage bounded. This matches the scanline-sized buffer used by
+// ClockworkPi's reference driver.
+const TRANSFER_PIXELS: usize = WIDTH as usize;
+const TRANSFER_BYTES: usize = TRANSFER_PIXELS * 3;
 
 // The ST7365P requires CS to remain high for at least 40 ns between
 // transactions.
@@ -196,8 +203,16 @@ where
         result
     }
 
-    fn write_color(&mut self, color: Rgb888) -> Result<(), SPI::Error> {
-        self.spi.write(&[color.r(), color.g(), color.b()])
+    fn write_pixels(&mut self, pixels: &[u8]) -> Result<(), SPI::Error> {
+        if pixels.is_empty() {
+            return Ok(());
+        }
+
+        let result = self.spi.write(pixels);
+        if result.is_err() {
+            self.abort_write();
+        }
+        result
     }
 
     fn abort_write(&mut self) {
@@ -231,9 +246,16 @@ where
     where
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        let mut selected = false;
+        #[derive(PartialEq, Eq)]
+        enum DrawState {
+            Idle,
+            Writing,
+        }
+
+        let mut state = DrawState::Idle;
         let mut expected = None;
         let mut window_start_x = 0;
+        let mut buffer: Vec<u8, TRANSFER_BYTES> = Vec::new();
 
         for Pixel(point, color) in pixels {
             if point.x < 0 || point.y < 0 || point.x >= WIDTH as i32 || point.y >= HEIGHT as i32 {
@@ -241,18 +263,25 @@ where
             }
 
             if expected != Some(point) {
-                if selected {
+                if state == DrawState::Writing {
+                    self.write_pixels(buffer.as_slice())?;
+                    buffer.clear();
                     self.end_write()?;
                 }
 
                 window_start_x = point.x;
                 self.begin_write(point.x as u16, point.y as u16, WIDTH - 1, HEIGHT - 1)?;
-                selected = true;
+                state = DrawState::Writing;
             }
 
-            if let Err(error) = self.write_color(color) {
-                self.abort_write();
-                return Err(error);
+            // The capacity is divisible by three and a full buffer is cleared
+            // after every RGB pixel, so these three bytes always fit.
+            buffer
+                .extend_from_slice(&[color.r(), color.g(), color.b()])
+                .expect("Unable to extend buffer");
+            if buffer.is_full() {
+                self.write_pixels(buffer.as_slice())?;
+                buffer.clear();
             }
 
             expected = if point.x < WIDTH as i32 - 1 {
@@ -264,7 +293,8 @@ where
             };
         }
 
-        if selected {
+        if state == DrawState::Writing {
+            self.write_pixels(buffer.as_slice())?;
             self.end_write()?;
         }
 
@@ -287,21 +317,28 @@ where
             bottom_right.y as u16,
         )?;
 
+        let mut buffer = [0; TRANSFER_BYTES];
+        let mut buffered_bytes = 0;
         for (point, color) in area.points().zip(colors) {
-            if drawable.contains(point)
-                && let Err(error) = self.write_color(color)
-            {
-                self.abort_write();
-                return Err(error);
+            if drawable.contains(point) {
+                buffer[buffered_bytes..buffered_bytes + 3].copy_from_slice(&[
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                ]);
+                buffered_bytes += 3;
+                if buffered_bytes == buffer.len() {
+                    self.write_pixels(&buffer)?;
+                    buffered_bytes = 0;
+                }
             }
         }
 
+        self.write_pixels(&buffer[..buffered_bytes])?;
         self.end_write()
     }
 
     fn fill_solid(&mut self, area: &Rectangle, color: Self::Color) -> Result<(), Self::Error> {
-        const CHUNK_PIXELS: usize = 32;
-
         let drawable = area.intersection(&self.bounding_box());
         let Some(bottom_right) = drawable.bottom_right() else {
             return Ok(());
@@ -314,27 +351,21 @@ where
             bottom_right.y as u16,
         )?;
 
-        let mut buffer = [0; CHUNK_PIXELS * 3];
+        let mut buffer = [0; TRANSFER_BYTES];
         for pixel in buffer.chunks_exact_mut(3) {
             pixel.copy_from_slice(&[color.r(), color.g(), color.b()]);
         }
 
         let pixel_count = drawable.size.width as usize * drawable.size.height as usize;
-        let full_chunks = pixel_count / CHUNK_PIXELS;
-        let remaining_bytes = pixel_count % CHUNK_PIXELS * 3;
+        let full_chunks = pixel_count / TRANSFER_PIXELS;
+        let remaining_bytes = pixel_count % TRANSFER_PIXELS * 3;
 
         for _ in 0..full_chunks {
-            if let Err(error) = self.spi.write(&buffer) {
-                self.abort_write();
-                return Err(error);
-            }
+            self.write_pixels(&buffer)?;
         }
 
-        if remaining_bytes != 0
-            && let Err(error) = self.spi.write(&buffer[..remaining_bytes])
-        {
-            self.abort_write();
-            return Err(error);
+        if remaining_bytes != 0 {
+            self.write_pixels(&buffer[..remaining_bytes])?;
         }
 
         self.end_write()
