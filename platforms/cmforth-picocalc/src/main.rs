@@ -100,7 +100,7 @@ fn main() -> ! {
     let spi = hal::Spi::<_, _, _, 8>::new(pac.SPI1, (mosi, miso, sck)).init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
-        12_000_000u32.Hz(),
+        25_000_000u32.Hz(),
         MODE_0,
     );
 
