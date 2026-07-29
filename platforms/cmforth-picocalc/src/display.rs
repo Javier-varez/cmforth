@@ -32,9 +32,12 @@ use heapless::Vec;
 pub const WIDTH: u16 = 320;
 pub const HEIGHT: u16 = 320;
 
+const GRAM_HEIGHT: u16 = 480;
 const COLUMN_ADDRESS_SET: u8 = 0x2a;
 const PAGE_ADDRESS_SET: u8 = 0x2b;
 const MEMORY_WRITE: u8 = 0x2c;
+const VERTICAL_SCROLLING_DEFINITION: u8 = 0x33;
+const VERTICAL_SCROLLING_START_ADDRESS: u8 = 0x37;
 
 // A display-width transfer buffer amortizes the SpiBus call overhead while
 // keeping stack usage bounded. This matches the scanline-sized buffer used by
@@ -53,6 +56,7 @@ pub struct PicoCalcDisplay<SPI, CS, DC, RST, DELAY> {
     dc: DC,
     reset: RST,
     delay: DELAY,
+    scroll_offset: u16,
 }
 
 impl<SPI, CS, DC, RST, DELAY> PicoCalcDisplay<SPI, CS, DC, RST, DELAY>
@@ -70,6 +74,7 @@ where
             dc,
             reset,
             delay,
+            scroll_offset: 0,
         }
     }
 
@@ -119,7 +124,61 @@ where
         self.delay.delay_ms(120);
         self.command(0x36, &[0x48])?;
 
+        // The controller has 480 rows of GRAM behind the 320-row panel. Make
+        // the entire GRAM area scrollable so it can be used as a circular
+        // backing store for the terminal viewport.
+        let [scroll_height_high, scroll_height_low] = GRAM_HEIGHT.to_be_bytes();
+        self.command(
+            VERTICAL_SCROLLING_DEFINITION,
+            &[
+                0x00,
+                0x00,
+                scroll_height_high,
+                scroll_height_low,
+                0x00,
+                0x00,
+            ],
+        )?;
+        self.write_scroll_offset(0)?;
+        self.scroll_offset = 0;
+
         Ok(())
+    }
+
+    /// Scrolls the visible viewport up and clears the newly exposed rows.
+    pub(crate) fn scroll_up(&mut self, rows: u16, color: Rgb888) -> Result<(), SPI::Error> {
+        if rows == 0 {
+            return Ok(());
+        }
+
+        let old_offset = self.scroll_offset;
+        let offset = (self.scroll_offset + rows) % GRAM_HEIGHT;
+        // Use the next mapping to clear the rows that are about to enter the
+        // viewport while the controller still keeps them off-screen.
+        self.scroll_offset = offset;
+        let area = Rectangle::new(
+            Point::new(0, (HEIGHT - rows) as i32),
+            Size::new(WIDTH as u32, rows as u32),
+        );
+        if let Err(error) = self.fill_solid(&area, color) {
+            self.scroll_offset = old_offset;
+            return Err(error);
+        }
+
+        if let Err(error) = self.write_scroll_offset(offset) {
+            self.scroll_offset = old_offset;
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    fn write_scroll_offset(&mut self, offset: u16) -> Result<(), SPI::Error> {
+        self.command(VERTICAL_SCROLLING_START_ADDRESS, &offset.to_be_bytes())
+    }
+
+    fn physical_y(&self, logical_y: u16) -> u16 {
+        (self.scroll_offset + logical_y) % GRAM_HEIGHT
     }
 
     fn write_init(&mut self, data: bool, bytes: &[u8]) -> Result<(), SPI::Error> {
@@ -215,6 +274,36 @@ where
         result
     }
 
+    fn fill_solid_physical(
+        &mut self,
+        x_start: u16,
+        y_start: u16,
+        x_end: u16,
+        y_end: u16,
+        color: Rgb888,
+    ) -> Result<(), SPI::Error> {
+        self.begin_write(x_start, y_start, x_end, y_end)?;
+
+        let mut buffer = [0; TRANSFER_BYTES];
+        for pixel in buffer.chunks_exact_mut(3) {
+            pixel.copy_from_slice(&[color.r(), color.g(), color.b()]);
+        }
+
+        let pixel_count = (x_end - x_start + 1) as usize * (y_end - y_start + 1) as usize;
+        let full_chunks = pixel_count / TRANSFER_PIXELS;
+        let remaining_bytes = pixel_count % TRANSFER_PIXELS * 3;
+
+        for _ in 0..full_chunks {
+            self.write_pixels(&buffer)?;
+        }
+
+        if remaining_bytes != 0 {
+            self.write_pixels(&buffer[..remaining_bytes])?;
+        }
+
+        self.end_write()
+    }
+
     fn abort_write(&mut self) {
         self.deselect();
     }
@@ -261,6 +350,7 @@ where
             if point.x < 0 || point.y < 0 || point.x >= WIDTH as i32 || point.y >= HEIGHT as i32 {
                 continue;
             }
+            let physical_y = self.physical_y(point.y as u16);
 
             if expected != Some(point) {
                 if state == DrawState::Writing {
@@ -270,7 +360,7 @@ where
                 }
 
                 window_start_x = point.x;
-                self.begin_write(point.x as u16, point.y as u16, WIDTH - 1, HEIGHT - 1)?;
+                self.begin_write(point.x as u16, physical_y, WIDTH - 1, GRAM_HEIGHT - 1)?;
                 state = DrawState::Writing;
             }
 
@@ -286,7 +376,7 @@ where
 
             expected = if point.x < WIDTH as i32 - 1 {
                 Some(Point::new(point.x + 1, point.y))
-            } else if point.y < HEIGHT as i32 - 1 {
+            } else if point.y < HEIGHT as i32 - 1 && physical_y < GRAM_HEIGHT - 1 {
                 Some(Point::new(window_start_x, point.y + 1))
             } else {
                 None
@@ -310,17 +400,36 @@ where
             return Ok(());
         };
 
+        let height = drawable.size.height as u16;
+        let physical_y = self.physical_y(drawable.top_left.y as u16);
+        let first_height = height.min(GRAM_HEIGHT - physical_y);
         self.begin_write(
             drawable.top_left.x as u16,
-            drawable.top_left.y as u16,
+            physical_y,
             bottom_right.x as u16,
-            bottom_right.y as u16,
+            physical_y + first_height - 1,
         )?;
 
+        let wraps = first_height < height;
+        let wrap_y = drawable.top_left.y + first_height as i32;
+        let mut wrapped = false;
         let mut buffer = [0; TRANSFER_BYTES];
         let mut buffered_bytes = 0;
         for (point, color) in area.points().zip(colors) {
             if drawable.contains(point) {
+                if wraps && !wrapped && point.y >= wrap_y {
+                    self.write_pixels(&buffer[..buffered_bytes])?;
+                    buffered_bytes = 0;
+                    self.end_write()?;
+                    self.begin_write(
+                        drawable.top_left.x as u16,
+                        0,
+                        bottom_right.x as u16,
+                        height - first_height - 1,
+                    )?;
+                    wrapped = true;
+                }
+
                 buffer[buffered_bytes..buffered_bytes + 3].copy_from_slice(&[
                     color.r(),
                     color.g(),
@@ -344,30 +453,25 @@ where
             return Ok(());
         };
 
-        self.begin_write(
-            drawable.top_left.x as u16,
-            drawable.top_left.y as u16,
-            bottom_right.x as u16,
-            bottom_right.y as u16,
+        let x_start = drawable.top_left.x as u16;
+        let x_end = bottom_right.x as u16;
+        let height = drawable.size.height as u16;
+        let physical_y = self.physical_y(drawable.top_left.y as u16);
+        let first_height = height.min(GRAM_HEIGHT - physical_y);
+
+        self.fill_solid_physical(
+            x_start,
+            physical_y,
+            x_end,
+            physical_y + first_height - 1,
+            color,
         )?;
 
-        let mut buffer = [0; TRANSFER_BYTES];
-        for pixel in buffer.chunks_exact_mut(3) {
-            pixel.copy_from_slice(&[color.r(), color.g(), color.b()]);
+        let remaining_height = height - first_height;
+        if remaining_height != 0 {
+            self.fill_solid_physical(x_start, 0, x_end, remaining_height - 1, color)?;
         }
 
-        let pixel_count = drawable.size.width as usize * drawable.size.height as usize;
-        let full_chunks = pixel_count / TRANSFER_PIXELS;
-        let remaining_bytes = pixel_count % TRANSFER_PIXELS * 3;
-
-        for _ in 0..full_chunks {
-            self.write_pixels(&buffer)?;
-        }
-
-        if remaining_bytes != 0 {
-            self.write_pixels(&buffer[..remaining_bytes])?;
-        }
-
-        self.end_write()
+        Ok(())
     }
 }
