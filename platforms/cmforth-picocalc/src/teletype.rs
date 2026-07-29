@@ -58,34 +58,14 @@ where
         }
     }
 
-    /// Adds a line and reports whether the visible contents scrolled.
-    fn newline(&mut self) -> bool {
-        let scrolled = self.lines.is_full();
-        if scrolled {
+    fn newline(&mut self) {
+        if self.lines.is_full() {
             self.lines.pop_front();
+            self.display
+                .scroll_up(CHARACTER_HEIGHT as u16, Rgb888::BLACK)
+                .unwrap();
         }
         self.lines.push_back(String::new()).unwrap();
-        scrolled
-    }
-
-    fn update_display(&mut self) {
-        let text_style = MonoTextStyleBuilder::new()
-            .font(&FONT_6X12)
-            .text_color(Rgb888::WHITE)
-            .background_color(Rgb888::BLACK)
-            .build();
-
-        self.display.clear(Rgb888::BLACK).unwrap();
-        for (line_number, line) in self.lines.iter().enumerate() {
-            Text::with_baseline(
-                line,
-                Point::new(0, line_number as i32 * CHARACTER_HEIGHT as i32),
-                text_style,
-                Baseline::Top,
-            )
-            .draw(&mut self.display)
-            .unwrap();
-        }
     }
 
     fn update_text(&mut self, line: usize, column: usize, text: &str) {
@@ -115,8 +95,8 @@ where
     }
 
     fn buffer_line(&mut self) {
-        if self.lines.back().is_none_or(|line| !line.is_empty()) && self.newline() {
-            self.update_display();
+        if self.lines.back().is_none_or(|line| !line.is_empty()) {
+            self.newline();
         }
         let last_line = self.lines.back_mut().unwrap();
         last_line.push_str("ok ").unwrap();
@@ -144,9 +124,7 @@ where
                     }
                 }
                 b'\r' | b'\n' => {
-                    if self.newline() {
-                        self.update_display();
-                    }
+                    self.newline();
                     exit = true;
                 }
                 v => {
@@ -230,20 +208,15 @@ where
     fn write(&mut self, data: &[u8]) {
         for &v in data {
             match v {
-                b'\n' => {
-                    if self.newline() {
-                        self.update_display();
-                    }
-                }
+                b'\n' => self.newline(),
                 b'\r' => {}
                 b' '..=b'~' => {
                     if self
                         .lines
                         .back()
                         .is_none_or(|line| line.len() == line.capacity())
-                        && self.newline()
                     {
-                        self.update_display();
+                        self.newline();
                     }
                     let line_number = self.lines.len() - 1;
                     let column = self.lines.back().unwrap().len();
