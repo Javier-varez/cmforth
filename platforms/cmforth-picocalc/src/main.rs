@@ -8,10 +8,11 @@ mod teletype;
 
 use cmforth::{
     Forth,
-    io::{CombinedIo, StringReader},
+    io::{CombinedIo, StringReader, Writer},
     stack::{Stack, StackStorage},
     types::{Address, Word},
 };
+use core::fmt::Write;
 use defmt::*;
 use defmt_rtt as _;
 use display::PicoCalcDisplay;
@@ -128,10 +129,9 @@ fn main() -> ! {
     loop {
         unsafe {
             let _ = forth.run(&mut teletype).inspect_err(|err| {
-                use core::fmt::Write;
-                use core::write;
                 let mut string: heapless::String<256> = heapless::String::new();
-                let _ = write!(string, "{err}");
+                let _ = core::write!(string, "{err}");
+                teletype.write(string.as_bytes());
                 defmt::error!("Error running forth interpreter: {}", string.as_str());
             });
         }
