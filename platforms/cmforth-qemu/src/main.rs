@@ -102,9 +102,10 @@ fn main() -> ! {
     }
 
     let mut io = SemihostingIo::new();
-    unsafe {
-        forth.run(&mut io).unwrap();
+    loop {
+        let result = unsafe { forth.run(&mut io) };
+        if let Err(err) = result {
+            let _ = writeln!(SemihostingWriter, "Interpreter error: {err}");
+        }
     }
-
-    unreachable!();
 }
