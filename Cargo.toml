@@ -16,7 +16,7 @@ embedded-graphics = "0.8.1"
 defmt = "1"
 defmt-rtt = "1"
 panic-probe = "1"
-rp235x-hal = "0.3"
+rp235x-hal = "0.4"
 
 [profile.dev]
 debug = 1
