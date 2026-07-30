@@ -1,15 +1,14 @@
-use core::convert::Infallible;
 use embedded_graphics::{
     mono_font::{MonoTextStyleBuilder, ascii::FONT_6X12},
     pixelcolor::Rgb888,
     prelude::*,
     text::{Baseline, Text},
 };
-use embedded_hal::{delay::DelayNs, digital::OutputPin, i2c::I2c, spi::SpiBus};
+use embedded_hal::i2c::I2c;
 use heapless::string::String;
 use heapless::{Deque, Vec};
 
-use crate::display::{HEIGHT, PicoCalcDisplay, WIDTH};
+use crate::display::{DisplayControls, HEIGHT, PicoCalcDisplay, WIDTH};
 use crate::keyboard::PicoCalcKeyboard;
 use cmforth::io::{Reader, ReaderWriter, Writer};
 
@@ -18,19 +17,16 @@ const CHARACTER_HEIGHT: u32 = FONT_6X12.character_size.height;
 const MAX_LINES: usize = HEIGHT as usize / CHARACTER_HEIGHT as usize;
 const MAX_WIDTH: usize = WIDTH as usize / CHARACTER_WIDTH as usize;
 
-pub struct Teletype<I2C, SPI, CS, DC, RST, DELAY> {
+pub struct Teletype<I2C, C: DisplayControls> {
     read_line: Vec<u8, MAX_WIDTH>,
     read_index: usize,
     lines: Deque<String<MAX_WIDTH>, MAX_LINES>,
     keyboard: PicoCalcKeyboard<I2C>,
-    display: PicoCalcDisplay<SPI, CS, DC, RST, DELAY>,
+    display: PicoCalcDisplay<C>,
 }
 
-impl<I2C, SPI, CS, DC, RST, DELAY> Teletype<I2C, SPI, CS, DC, RST, DELAY> {
-    pub fn new(
-        keyboard: PicoCalcKeyboard<I2C>,
-        display: PicoCalcDisplay<SPI, CS, DC, RST, DELAY>,
-    ) -> Self {
+impl<I2C, C: DisplayControls> Teletype<I2C, C> {
+    pub fn new(keyboard: PicoCalcKeyboard<I2C>, display: PicoCalcDisplay<C>) -> Self {
         Self {
             read_line: Vec::new(),
             read_index: 0,
@@ -41,14 +37,10 @@ impl<I2C, SPI, CS, DC, RST, DELAY> Teletype<I2C, SPI, CS, DC, RST, DELAY> {
     }
 }
 
-impl<I2C, SPI, CS, DC, RST, DELAY> Teletype<I2C, SPI, CS, DC, RST, DELAY>
+impl<I2C, C> Teletype<I2C, C>
 where
     I2C: I2c,
-    SPI: SpiBus<u8>,
-    CS: OutputPin<Error = Infallible>,
-    DC: OutputPin<Error = Infallible>,
-    RST: OutputPin<Error = Infallible>,
-    DELAY: DelayNs,
+    C: DisplayControls,
 {
     fn read_key(&mut self) -> u8 {
         loop {
@@ -148,14 +140,10 @@ where
     }
 }
 
-impl<I2C, SPI, CS, DC, RST, DELAY> Reader for Teletype<I2C, SPI, CS, DC, RST, DELAY>
+impl<I2C, C> Reader for Teletype<I2C, C>
 where
     I2C: I2c,
-    SPI: SpiBus<u8>,
-    CS: OutputPin<Error = Infallible>,
-    DC: OutputPin<Error = Infallible>,
-    RST: OutputPin<Error = Infallible>,
-    DELAY: DelayNs,
+    C: DisplayControls,
 {
     fn read(&mut self) -> u8 {
         while self.read_index >= self.read_line.len() {
@@ -196,14 +184,10 @@ where
     }
 }
 
-impl<I2C, SPI, CS, DC, RST, DELAY> Writer for Teletype<I2C, SPI, CS, DC, RST, DELAY>
+impl<I2C, C> Writer for Teletype<I2C, C>
 where
     I2C: I2c,
-    SPI: SpiBus<u8>,
-    CS: OutputPin<Error = Infallible>,
-    DC: OutputPin<Error = Infallible>,
-    RST: OutputPin<Error = Infallible>,
-    DELAY: DelayNs,
+    C: DisplayControls,
 {
     fn write(&mut self, data: &[u8]) {
         for &v in data {
@@ -229,13 +213,9 @@ where
     }
 }
 
-impl<I2C, SPI, CS, DC, RST, DELAY> ReaderWriter for Teletype<I2C, SPI, CS, DC, RST, DELAY>
+impl<I2C, C> ReaderWriter for Teletype<I2C, C>
 where
     I2C: I2c,
-    SPI: SpiBus<u8>,
-    CS: OutputPin<Error = Infallible>,
-    DC: OutputPin<Error = Infallible>,
-    RST: OutputPin<Error = Infallible>,
-    DELAY: DelayNs,
+    C: DisplayControls,
 {
 }
