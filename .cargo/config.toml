@@ -1,2 +1,8 @@
 [build]
 target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+runner = ["emu-test", "--machine", "mps2-an500", "--cpu", "cortex-m7", "--qemu-binary", "qemu-system-arm"]
+
+[env]
+DEFMT_LOG = "trace"

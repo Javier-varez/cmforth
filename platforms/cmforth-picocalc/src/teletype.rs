@@ -17,6 +17,8 @@ const CHARACTER_HEIGHT: u32 = FONT_6X12.character_size.height;
 const MAX_LINES: usize = HEIGHT as usize / CHARACTER_HEIGHT as usize;
 const MAX_WIDTH: usize = WIDTH as usize / CHARACTER_WIDTH as usize;
 
+const OK_TEXT: &str = " ok ";
+
 pub struct Teletype<I2C, C: DisplayControls> {
     read_line: Vec<u8, MAX_WIDTH>,
     read_index: usize,
@@ -91,9 +93,9 @@ where
             self.newline();
         }
         let last_line = self.lines.back_mut().unwrap();
-        last_line.push_str("ok ").unwrap();
+        last_line.push_str(OK_TEXT).unwrap();
         let line_number = self.lines.len() - 1;
-        self.update_text(line_number, 0, "ok ");
+        self.update_text(line_number, 0, OK_TEXT);
 
         self.read_line.clear();
         self.read_index = 0;
@@ -180,7 +182,13 @@ where
         {
             self.read_index += 1;
         }
-        &self.read_line[start..self.read_index]
+        let word = &self.read_line[start..self.read_index];
+        self.read_index += 1; // Skip next whitespace already (if any)
+        word
+    }
+
+    fn flush(&mut self) {
+        self.read_index = self.read_line.len();
     }
 }
 

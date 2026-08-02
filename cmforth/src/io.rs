@@ -2,6 +2,9 @@ pub trait Reader {
     fn read(&mut self) -> u8;
 
     fn read_word(&mut self) -> &[u8];
+
+    // Discards buffered data. Useful when a command fails
+    fn flush(&mut self);
 }
 
 pub trait Writer {
@@ -67,6 +70,10 @@ impl Reader for StringReader<'_> {
         self.idx += len;
         r
     }
+
+    fn flush(&mut self) {
+        self.idx = self.string.len();
+    }
 }
 
 pub struct CombinedIo<T, U>
@@ -99,6 +106,10 @@ where
 
     fn read(&mut self) -> u8 {
         self.reader.read()
+    }
+
+    fn flush(&mut self) {
+        self.reader.flush();
     }
 }
 

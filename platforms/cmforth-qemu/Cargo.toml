@@ -1,18 +1,21 @@
 [package]
-name = "cmforth-repl"
+name = "cmforth-qemu"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "cmforth-qemu"
+test = false
+
 [dependencies]
-cmforth.workspace = true
-cortex-m = { workspace = true, optional = true }
+cmforth = { workspace = true, features = ["cortex-m-arch"] }
+cortex-m.workspace = true
 cortex-m-rt.workspace = true
-heapless = { workspace = true, optional = true }
+heapless.workspace = true
 log.workspace = true
 static_cell.workspace = true
 
 [features]
-cortex-m-arch = ["cortex-m", "heapless"]
-default = ["cortex-m-arch"]
+default = []
 
 [dev-dependencies]
