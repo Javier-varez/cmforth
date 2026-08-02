@@ -258,7 +258,7 @@
 : .S		( -- )
 	DSP@		( get current stack pointer )
 	BEGIN
-		DUP S0 @ <
+		DUP S0 <
 	WHILE
 		DUP @ U.	( print the stack element )
 		SPACE

@@ -1,6 +1,6 @@
 use crate::types::Address;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, defmt::Format, Debug, PartialEq, Eq)]
 pub enum Error {
     #[error("Interpreter failure")]
     InterpreterFailure,

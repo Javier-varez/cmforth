@@ -10,7 +10,7 @@ use core::fmt::Write;
 mod thumbv7m;
 
 #[cfg(all(target_os = "none", target_arch = "arm", feature = "cortex-m-arch"))]
-use thumbv7m::*;
+pub use thumbv7m::*;
 
 #[cfg(all(
     not(all(target_os = "none", target_arch = "arm")),
@@ -29,6 +29,8 @@ pub enum ExitReason {
     KeyOp,
     TellOp,
     EmitOp,
+    StackUnderflow,
+    StackOverflow,
 }
 
 #[derive(Default, Debug)]
@@ -279,6 +281,8 @@ impl<'a> ForthContext<'a> {
                 ExitReason::KeyOp => self.key_op(io)?,
                 ExitReason::TellOp => unsafe { self.tell_op(io)? },
                 ExitReason::EmitOp => self.emit_op(io)?,
+                ExitReason::StackUnderflow => return Err(Error::StackUnderflow),
+                ExitReason::StackOverflow => return Err(Error::StackOverflow),
             };
         }
 
@@ -286,6 +290,15 @@ impl<'a> ForthContext<'a> {
     }
 
     pub unsafe fn interpret_one<T: ReaderWriter>(&mut self, io: &mut T) -> Result<(), Error> {
+        unsafe { self.interpret_one_inner(io) }.inspect_err(|_| {
+            self.dsp.reset();
+            self.rsp.reset();
+            self.variables.state = State::ImmediateMode;
+            io.flush();
+        })
+    }
+
+    unsafe fn interpret_one_inner<T: ReaderWriter>(&mut self, io: &mut T) -> Result<(), Error> {
         let word = io.read_word();
         if word.is_empty() {
             return Ok(());

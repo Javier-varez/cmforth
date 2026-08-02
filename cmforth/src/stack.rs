@@ -6,7 +6,10 @@
 
 use core::{marker::PhantomData, mem::MaybeUninit};
 
-use crate::{error::Error, types::Address};
+use crate::{
+    error::Error,
+    types::{Address, Word},
+};
 
 /// Storage for a forth stack of a given size and a given data type.
 /// Alignment of the type must be respected.
@@ -63,6 +66,23 @@ pub struct StackProperties<'a, T: Sized, const UP: bool = false> {
     _pd: PhantomData<&'a mut [T]>,
 }
 
+impl<'a, const UP: bool, T: Sized> StackProperties<'a, T, UP> {
+    pub fn get(&self, address: Address) -> Option<Word> {
+        if address >= self.top || address < self.bottom {
+            return None;
+        }
+
+        let layout = core::alloc::Layout::new::<Word>();
+        if !address.is_multiple_of(layout.align() as u32) {
+            return None;
+        }
+
+        let address: *const Word = core::ptr::with_exposed_provenance(address as usize);
+        let word = unsafe { core::ptr::read_volatile(address) };
+        Some(word)
+    }
+}
+
 impl<'a, T: Sized> StackProperties<'a, T, true> {
     pub fn push(&mut self, v: T) -> Result<(), Error> {
         let new_ptr = self.ptr + core::mem::size_of::<T>() as Address;
@@ -86,6 +106,10 @@ impl<'a, T: Sized> StackProperties<'a, T, true> {
         let v = unsafe { core::ptr::read(self.ptr as *mut T) };
 
         Ok(v)
+    }
+
+    pub fn reset(&mut self) {
+        self.ptr = self.bottom;
     }
 }
 
@@ -112,5 +136,9 @@ impl<'a, T: Sized> StackProperties<'a, T, false> {
         self.ptr = new_ptr;
 
         Ok(v)
+    }
+
+    pub fn reset(&mut self) {
+        self.ptr = self.top;
     }
 }

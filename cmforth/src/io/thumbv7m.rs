@@ -93,8 +93,12 @@ impl super::Reader for SemihostingIo {
             .unwrap_or(self.line_buf.len() - self.idx);
 
         let r = &self.line_buf[self.idx..self.idx + len];
-        self.idx += len;
+        self.idx += len + 1;
         r
+    }
+
+    fn flush(&mut self) {
+        self.idx = self.line_buf.len();
     }
 }
 

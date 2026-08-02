@@ -3,11 +3,25 @@ name = "cmforth"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+harness = false
+bench = false
+
 [dependencies]
 thiserror = { workspace = true }
+log = { workspace = true }
 cortex-m = { workspace = true, optional = true }
 heapless = { workspace = true, optional = true }
-log = { workspace = true }
+embedded-test-linker-script.workspace = true
+defmt.workspace = true
+
+[dev-dependencies]
+cmforth = { path = ".", features = ["cortex-m-arch"] }
+cortex-m-rt.workspace = true
+cortex-m = { workspace = true, features = ["critical-section-single-core"] }
+embedded-test = { workspace = true, features = ["defmt"] }
+static_cell.workspace = true
+defmt-rtt.workspace = true
 
 [features]
 cortex-m-arch = ["cortex-m", "heapless"]
