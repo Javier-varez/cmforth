@@ -1,5 +1,3 @@
-\ vim:tabstop=8 noexpandtab shiftwidth=8
-
 \ The primitive word /MOD (DIVMOD) leaves both the quotient and the remainder on the stack.  (On
 \ i386, the idivl instruction gives both anyway).  Now we can define the / and MOD in terms of /MOD
 \ and a few other primitives.
@@ -236,7 +234,7 @@
 
 ( This is the underlying recursive definition of U. )
 : U.		( u -- )
-	BASE @ /MOD	( width rem quot )
+	BASE @ U/MOD	( width rem quot )
 	?DUP IF			( if quotient <> 0 then )
 		RECURSE		( print the quotient )
 	THEN
@@ -352,7 +350,7 @@
 
 ( DEPTH returns the depth of the stack. )
 : DEPTH		( -- n )
-	DSP@ S0 @ SWAP -
+	DSP@ S0 SWAP -
 ;
 
 (
