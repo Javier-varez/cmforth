@@ -339,6 +339,14 @@ core::arch::global_asm! {
         push {{ r0, r1 }}
         next
 
+    defcode "U/MOD", 5, udivmod
+        check_dsppop 2
+        pop {{ r1, r2 }}
+        udiv r0, r2, r1
+        mls r1, r0, r1, r2
+        push {{ r0, r1 }}
+        next
+
     defcode "=", 1, equ
         check_dsppop 2
         pop {{ r0, r1 }}
